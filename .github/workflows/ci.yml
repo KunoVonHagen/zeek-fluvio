@@ -6,49 +6,75 @@ on:
   pull_request:
     branches: [ main ]
 
+  # Reusable workflow support
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git reference (branch, tag, or commit SHA) to checkout"
+        required: false
+        type: string
+
+  # Manual trigger support
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git reference (branch, tag, or commit SHA) to checkout"
+        required: false
+        type: string
+
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
-    - name: Install Runtime Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake g++ wget curl tcpdump
+      - name: Download upstream versions (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: upstream-versions-${{ github.run_id }}
 
-    - name: Install Zeek
-      run: |
-        echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' | sudo tee /etc/apt/sources.list.d/security:zeek.list
-        curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
-        sudo apt-get update
-        sudo apt-get install -y zeek zeek-core-dev
-        echo "/opt/zeek/bin" >> $GITHUB_PATH
+      - name: Install Runtime Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ wget curl tcpdump
 
-    - name: Install Fluvio Local Cluster
-      run: |
-        curl -fsS https://raw.githubusercontent.com/fluvio-community/fluvio/master/install.sh | FVM_VERSION=dev bash
-        echo "$HOME/.fluvio/bin" >> $GITHUB_PATH
+      - name: Install Zeek
+        run: |
+          echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' | sudo tee /etc/apt/sources.list.d/security:zeek.list
+          curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y zeek zeek-core-dev
+          echo "/opt/zeek/bin" >> $GITHUB_PATH
 
-    - name: Start Fluvio Cluster
-      run: |
-        export PATH="$HOME/.fluvio/bin:$PATH"
-        fluvio cluster start --local
+      - name: Install Fluvio Local Cluster
+        run: |
+          curl -fsS https://raw.githubusercontent.com/fluvio-community/fluvio/master/install.sh | FVM_VERSION=dev bash
+          echo "$HOME/.fluvio/bin" >> $GITHUB_PATH
 
-    - name: Configure and Compile Plugin
-      run: |
-        export PATH="/opt/zeek/bin:$PATH"
-        ./configure
-        make -C build
+      - name: Start Fluvio Cluster
+        run: |
+          export PATH="$HOME/.fluvio/bin:$PATH"
+          fluvio cluster start --local
 
-    - name: Test Component Registry Load
-      run: |
-        export PATH="/opt/zeek/bin:$PATH"
-        export ZEEK_PLUGIN_PATH=${GITHUB_WORKSPACE}/build
-        # Verifies the plugin explicitly exists in Zeek runtime
-        zeek -N Zeek::Fluvio
+      - name: Configure and Compile Plugin
+        run: |
+          export PATH="/opt/zeek/bin:$PATH"
+          ./configure
+          make -C build
 
-    - name: End-to-End Log Serialization Integration Test
-      run: |
-        # Utilize the uploaded static pre-recorded PCAP capture to avoid dynamic interface generation issues!
-        bash ./tests/e2e.sh tests/Traces/ping.pcap
+      - name: Test Component Registry Load
+        run: |
+          export PATH="/opt/zeek/bin:$PATH"
+          export ZEEK_PLUGIN_PATH=${GITHUB_WORKSPACE}/build
+          # Verifies the plugin explicitly exists in Zeek runtime
+          zeek -N Zeek::Fluvio
+
+      - name: End-to-End Log Serialization Integration Test
+        run: |
+          # Utilize the uploaded static pre-recorded PCAP capture to avoid dynamic interface generation issues!
+          bash ./tests/e2e.sh tests/Traces/ping.pcap
