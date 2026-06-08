@@ -1,0 +1,183 @@
+name: Upstream compatibility
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # daily at 03:00 UTC
+  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  check_upstreams:
+    runs-on: ubuntu-latest
+
+    outputs:
+      changed: ${{ steps.upstream.outputs.changed }}
+      ref: ${{ steps.upstream.outputs.ref }}
+      zeek: ${{ steps.upstream.outputs.zeek }}
+      fluvio: ${{ steps.upstream.outputs.fluvio }}
+      fluvio_client_cpp: ${{ steps.upstream.outputs.fluvio_client_cpp }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install deps for querying
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl grep sed
+
+      - name: Check upstream versions and maybe run tests
+        id: upstream
+        env:
+          FLUVIO_REPO: "infinyon/fluvio"
+          FLUVIO_CLIENT_CPP_REPO: "ASTRAOS-de/fluvio-client-cpp"
+        run: |
+          set -euo pipefail
+
+          echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' | sudo tee /etc/apt/sources.list.d/security:zeek.list
+          curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
+          sudo apt-get update
+
+          normalize_version() {
+            sed -E 's/^v//'
+          }
+
+          fetch_latest_repo_release() {
+            local repo="$1"
+            local tag=""
+
+            tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" \
+              | grep -E '"tag_name":' | head -n1 \
+              | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')" || true
+
+            if [ -n "${tag:-}" ]; then
+              printf '%s\n' "$tag" | normalize_version
+              return 0
+            fi
+
+            tag="$(curl -fsSL "https://api.github.com/repos/${repo}/tags" \
+              | grep -E '"name":' | head -n1 \
+              | sed -E 's/.*"name": "([^"]+)".*/\1/')" || true
+
+            printf '%s\n' "${tag:-unknown}" | normalize_version
+          }
+
+          fetch_latest_apt_release() {
+            local package="$1"
+            local version=""
+
+            version="$(apt-cache madison "$package" | head -n1 | awk '{print $3}')" || true
+
+            if [ -n "${version:-}" ]; then
+              printf '%s\n' "$version" | normalize_version
+              return 0
+            fi
+
+            printf '%s\n' "unknown" | normalize_version
+          }
+
+          REPO_DIR="$(pwd)"
+          UPSTREAM_CACHE="$REPO_DIR/UPSTREAM_VERSIONS"
+
+          NEW_ZEEK="$(fetch_latest_apt_release "zeek")"
+          NEW_FLUVIO="$(fetch_latest_repo_release "$FLUVIO_REPO")"
+          NEW_FLUVIO_CLIENT_CPP="$(fetch_latest_repo_release "$FLUVIO_CLIENT_CPP_REPO")"
+
+          if [ ! -f "$UPSTREAM_CACHE" ]; then
+            OLD_ZEEK=''
+            OLD_FLUVIO=''
+            OLD_FLUVIO_CLIENT_CPP=''
+          else
+            OLD_ZEEK="$(grep '^zeek=' "$UPSTREAM_CACHE" | sed 's/zeek=//')" || true
+            OLD_FLUVIO="$(grep '^fluvio=' "$UPSTREAM_CACHE" | sed 's/fluvio=//')" || true
+            OLD_FLUVIO_CLIENT_CPP="$(grep '^fluvio_client_cpp=' "$UPSTREAM_CACHE" | sed 's/fluvio_client_cpp=//')" || true
+          fi
+
+          echo "Latest upstream: zeek=$NEW_ZEEK fluvio=$NEW_FLUVIO fluvio_client_cpp=$NEW_FLUVIO_CLIENT_CPP"
+          echo "Cached upstream: zeek=${OLD_ZEEK:-unset} fluvio=${OLD_FLUVIO:-unset} fluvio_client_cpp=${OLD_FLUVIO_CLIENT_CPP:-unset}"
+
+          {
+            echo "ref=${GITHUB_REF_NAME:-main}"
+            echo "zeek=$NEW_ZEEK"
+            echo "fluvio=$NEW_FLUVIO"
+            echo "fluvio_client_cpp=$NEW_FLUVIO_CLIENT_CPP"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$NEW_ZEEK" = "$OLD_ZEEK" ] && \
+             [ "$NEW_FLUVIO" = "$OLD_FLUVIO" ] && \
+             [ "$NEW_FLUVIO_CLIENT_CPP" = "$OLD_FLUVIO_CLIENT_CPP" ]; then
+            echo "Upstream versions unchanged. Skipping compatibility tests."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          cat > "$UPSTREAM_CACHE" <<EOF
+          zeek=${NEW_ZEEK}
+          fluvio=${NEW_FLUVIO}
+          fluvio_client_cpp=${NEW_FLUVIO_CLIENT_CPP}
+          EOF
+
+      - name: Upload UPSTREAM_VERSIONS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-versions-${{ github.run_id }}
+          path: UPSTREAM_VERSIONS
+
+  ci:
+    needs: check_upstreams
+    if: "${{ needs.check_upstreams.outputs.changed == 'true' }}"
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.check_upstreams.outputs.ref }}
+    secrets: inherit
+
+  ci_tls:
+    needs: check_upstreams
+    if: "${{ needs.check_upstreams.outputs.changed == 'true' }}"
+    uses: ./.github/workflows/ci-tls.yml
+    with:
+      ref: ${{ needs.check_upstreams.outputs.ref }}
+    secrets: inherit
+
+  update_cache:
+    needs: [check_upstreams, ci, ci_tls]
+    if: "${{ needs.check_upstreams.outputs.changed == 'true' }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.check_upstreams.outputs.ref }}
+
+      - name: Update cache and commit
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_REPOSITORY: "${{ github.repository }}"
+          ZEEK_VERSION: "${{ needs.check_upstreams.outputs.zeek }}"
+          FLUVIO_VERSION: "${{ needs.check_upstreams.outputs.fluvio }}"
+          FLUVIO_CLIENT_CPP_VERSION: "${{ needs.check_upstreams.outputs.fluvio_client_cpp }}"
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add UPSTREAM_VERSIONS
+          git commit -m "ci: update UPSTREAM_VERSIONS (zeek=${ZEEK_VERSION}, fluvio=${FLUVIO_VERSION}, fluvio-client-cpp=${FLUVIO_CLIENT_CPP_VERSION}) [skip ci]" || true
+
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:${{ needs.check_upstreams.outputs.ref }}
