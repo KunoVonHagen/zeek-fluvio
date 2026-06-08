@@ -2,15 +2,23 @@ name: Zeek Plugin CI for TLS support
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+  workflow_dispatch: {}
 
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref || github.ref }}
 
     - name: Install Runtime Dependencies
       run: |

@@ -1,0 +1,8 @@
+# Cached upstream versions of dependencies. Updated only by CI after successful compatibility run.
+# Format:
+# zeek=<version>
+# fluvio=<version>
+
+zeek=
+fluvio=
+
