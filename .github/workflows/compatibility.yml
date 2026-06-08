@@ -1,0 +1,88 @@
+name: Upstream compatibility
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # daily at 03:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check_upstreams:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install deps for querying
+        run: |
+          sudo apt-get update -y ; sudo apt-get install -y curl grep sed
+
+      - name: Check upstream versions and maybe run tests
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_REPOSITORY: "${{ github.repository }}"
+          ZEEK_REPO: "zeek/zeek"
+          FLUVIO_REPO: "infinyon/fluvio"
+        run: |
+          set -euo pipefail
+
+          fetch_latest() {
+            local repo="$1"
+            local tag
+            tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | grep -E '"tag_name":' | head -n1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')"
+            if [ -n "${tag:-}" ]; then
+              printf '%s\n' "$tag"
+              return 0
+            fi
+            tag="$(curl -fsSL "https://api.github.com/repos/${repo}/tags" | grep -E '"name":' | head -n1 | sed -E 's/.*"name": "([^"]+)".*/\1/')"
+            printf '%s\n' "${tag:-unknown}"
+          }
+
+          REPO_DIR="$(pwd)"
+          UPSTREAM_CACHE="$REPO_DIR/.upstream_versions"
+          TMP_OUT="$(mktemp)"
+          trap 'rm -f "$TMP_OUT"' EXIT
+
+          NEW_ZEEK="$(fetch_latest "$ZEEK_REPO")"
+          NEW_FLUVIO="$(fetch_latest "$FLUVIO_REPO")"
+
+          if [ ! -f "$UPSTREAM_CACHE" ]; then
+            echo "No existing .upstream_versions, will run compatibility tests and create cache."
+            OLD_ZEEK=''
+            OLD_FLUVIO=''
+          else
+            OLD_ZEEK="$(grep '^zeek=' "$UPSTREAM_CACHE" | sed 's/zeek=//')" || true
+            OLD_FLUVIO="$(grep '^fluvio=' "$UPSTREAM_CACHE" | sed 's/fluvio=//')" || true
+          fi
+
+          echo "Latest upstream: zeek=$NEW_ZEEK fluvio=$NEW_FLUVIO"
+          echo "Cached upstream: zeek=${OLD_ZEEK:-unset} fluvio=${OLD_FLUVIO:-unset}"
+
+          if [ "$NEW_ZEEK" = "$OLD_ZEEK" ] && [ "$NEW_FLUVIO" = "$OLD_FLUVIO" ]; then
+            echo "Upstream versions unchanged. Skipping compatibility tests."
+            exit 0
+          fi
+
+          echo "Detected upstream change, running full compatibility tests..."
+          chmod +x tests/e2e.sh || true
+          ./tests/e2e.sh tests/Traces/ping.pcap
+
+          echo "Compatibility tests passed. Updating .upstream_versions and committing."
+          cat > "$UPSTREAM_CACHE" <<EOF
+          zeek=${NEW_ZEEK}
+          fluvio=${NEW_FLUVIO}
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$UPSTREAM_CACHE"
+          git commit -m "ci: update .upstream_versions to zeek=${NEW_ZEEK} fluvio=${NEW_FLUVIO} [skip ci]" || true
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:refs/heads/main || git push
+
+
+
