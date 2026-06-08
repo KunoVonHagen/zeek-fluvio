@@ -1,0 +1,37 @@
+name: Branch name policy
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - dev
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get branch name
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate pattern
+        run: |
+          BRANCH_NAME="${{ steps.branch.outputs.branch }}"
+          echo "Validating branch: $BRANCH_NAME"
+          case "$BRANCH_NAME" in
+            release/*|feature/*|patch/*)
+              ;;
+            *)
+              echo "ERROR: branch '$BRANCH_NAME' does not match allowed prefixes (release/*, feature/*, patch/*)."
+              exit 1
+              ;;
+          esac
+
+
