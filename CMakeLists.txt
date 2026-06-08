@@ -2,11 +2,19 @@ cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
 project(ZeekPlugin_Fluvio CXX C)
 include(ZeekPlugin)
 
+file(STRINGS "UPSTREAM_VERSIONS" _lines)
+foreach(_line IN LISTS _lines)
+    string(STRIP "${_line}" _line)
+    if(_line MATCHES "^fluvio-client=(.+)$")
+        set(FLUVIO_CLIENT_CPP_VERSION "${CMAKE_MATCH_1}")
+    endif()
+endforeach()
 include(FetchContent)
 FetchContent_Declare(
-  fluvio_client_cpp
-  URL https://github.com/ASTRAOS-de/fluvio-client-cpp/releases/download/v0.1.0/fluvio-client-cpp-linux-x64.tar.gz
+        fluvio_client_cpp
+        URL https://github.com/ASTRAOS-de/fluvio-client-cpp/releases/download/v${FLUVIO_CLIENT_CPP_VERSION}/fluvio-client-cpp-linux-x64.tar.gz
 )
+
 FetchContent_MakeAvailable(fluvio_client_cpp)
 find_package(fluvio_client_cpp CONFIG REQUIRED PATHS ${fluvio_client_cpp_SOURCE_DIR})
 
