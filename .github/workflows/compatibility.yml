@@ -172,6 +172,12 @@ jobs:
           FLUVIO_CLIENT_CPP_VERSION: "${{ needs.check_upstreams.outputs.fluvio_client_cpp }}"
         run: |
           set -euo pipefail
+          
+          cat > UPSTREAM_VERSIONS <<EOF
+          zeek=${ZEEK_VERSION}
+          fluvio=${FLUVIO_VERSION}
+          fluvio_client_cpp=${FLUVIO_CLIENT_CPP_VERSION}
+          EOF
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
