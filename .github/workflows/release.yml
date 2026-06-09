@@ -19,13 +19,6 @@ jobs:
       ref: ${{ steps.branch.outputs.ref }}
       branch_name: ${{ steps.branch.outputs.branch_name }}
     steps:
-      - name: Generate a token
-        id: generate-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.CICD_APP_ID }}
-          private-key: ${{ secrets.CICD_APP_SECRET_KEY }}
-
       - name: Capture branch metadata
         id: branch
         run: |
@@ -63,6 +56,13 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}"
     runs-on: ubuntu-latest
     steps:
+      - name: Generate a token
+        uses: actions/create-github-app-token@v3
+        id: generate-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v4
         with:

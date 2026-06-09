@@ -26,13 +26,6 @@ jobs:
       fluvio_client_cpp: ${{ steps.upstream.outputs.fluvio_client_cpp }}
 
     steps:
-      - name: Generate a token
-        id: generate-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.CICD_APP_ID }}
-          private-key: ${{ secrets.CICD_APP_SECRET_KEY }}
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -164,6 +157,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Generate a token
+        uses: actions/create-github-app-token@v3
+        id: generate-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
